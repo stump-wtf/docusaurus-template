@@ -1,0 +1,70 @@
+# Publishes the PUBLIC documentation twin to GitHub Pages.
+#
+# This repo is canonical on Gitea (https://gitea.stump.rocks/stump.wtf/docusaurus-template);
+# github.com/stump-wtf/docusaurus-template is a read-only push mirror whose
+# history is force-replaced on every sync. Do not open PRs or push here — the
+# branch gets overwritten and the work is lost.
+#
+# This workflow exists on the mirror for one reason: GitHub Pages is the only
+# publicly reachable host of the two. The Gitea Pages twin resolves to a private
+# address and is LAN-only. Tests, lint and secret scanning all live in
+# .gitea/workflows/pipeline.yaml and are deliberately NOT duplicated here.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. `cancel-in-progress: false` because cancelling a
+# half-finished Pages deploy can leave the site in a partially-updated state,
+# and a superseded build finishing is harmless.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: docs-site
+
+      - name: Build
+        run: npm run build
+        working-directory: docs-site
+        env:
+          # The public host. Without this the build would bake the config's
+          # default into canonical and og:url tags. baseUrl needs no override:
+          # both hosts serve under /<repo>/, which is already the default.
+          DOCS_URL: https://stump-wtf.github.io
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

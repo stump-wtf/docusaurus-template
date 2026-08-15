@@ -1,0 +1,12 @@
+# Node
+node_modules/
+
+# Docusaurus build output and cache
+docs-site/build/
+docs-site/.docusaurus/
+
+# MDX generated from docs/ by the sdd-content plugin on every build.
+# Never committed: docs/ is the source of truth (SPEC-0001).
+docs-generated/
+
+.DS_Store

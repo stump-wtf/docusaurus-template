@@ -1,0 +1,75 @@
+# Gitea Actions is the real CI here: it runs on the canonical remote and is what
+# branch protection gates on. The GitHub twin (.github/workflows/pages.yml) only
+# publishes the public Pages mirror — the test and lint matrix is deliberately
+# not duplicated there, because a second CI that can fail independently is noise.
+#
+#   secret scan → build (typecheck + site) → publish to Gitea Pages
+#
+# Jobs are named separately because the Gitea Actions log API 404s on this
+# instance; job granularity is often the only signal about what failed.
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ gitea.workflow }}-${{ gitea.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1. Secrets first — a leaked credential must not wait behind a site build.
+  secrets:
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/gitleaks.yaml@main
+    secrets: inherit
+
+  # 2. Type-check and build. `make check` is the same target run locally.
+  #
+  #    node 22: Docusaurus is version-sensitive — node 23 fails outright on
+  #    ProgressPlugin validation — so the version is stated rather than
+  #    inherited from whatever the runner image ships.
+  build:
+    needs: [secrets]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - name: Install dependencies
+        run: make docs-install
+      - name: Typecheck and build
+        run: make check
+
+  # 3. Publish to Gitea Pages → https://<owner>.pages.stump.rocks/<repo>/
+  #
+  # The shared workflow refuses to publish from anything but the default branch,
+  # so a PR reaching this job builds the site and stops. That is worth having:
+  # a docs build breaks on content far more often than on config.
+  #
+  # Requires PAGES_ACCESS_KEY_ID / PAGES_SECRET_ACCESS_KEY in this repo's Actions
+  # secrets, provisioned from the `pages.users` list in the infrastructure
+  # inventory. Without them the build is green and the deploy step fails with
+  # "Garage does not support anonymous access yet" — rclone falling back to
+  # anonymous, a 403 that names the symptom and not the missing secret.
+  #
+  # The owner is slugified by the deploy action (lowercase, dots to dashes), so
+  # stump.wtf publishes to stump-wtf.pages.stump.rocks: a two-label host matches
+  # neither Caddy's *.pages.stump.rocks label nor its certificate.
+  pages:
+    needs: [build]
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/static-site.yaml@main
+    with:
+      working_directory: docs-site
+      source_dir: docs-site/build
+      site_url: https://stump-wtf.pages.stump.rocks
+      node_version: "22"
+    secrets: inherit
